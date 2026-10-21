@@ -1,4 +1,4 @@
-# AuthShield 接口文档（第一周 MVP）
+# AuthShield 接口文档（第二周）
 
 基础地址：`http://127.0.0.1:8000`
 
@@ -16,9 +16,10 @@ python -m authshield
 
 1. `GET /health` — 确认服务已启动  
 2. `POST /ingest/web` — 导入 `access.log`  
-3. `POST /detect` — 对库中事件跑路径扫描规则  
-4. `GET /alerts` — 查看告警列表  
+3. `POST /detect` — 对库中事件同时跑路径扫描和敏感路径  
+4. `GET /alerts` — 查看告警列表（可用 `?rule=` 过滤）  
 5. `GET /alerts/{alert_id}` — 查看某一条详情和证据  
+6. `GET /issues` — 查看导入时看不懂的行
 
 导入不会自动检测。检测不会再读日志文件，只读取 SQLite 里已有事件。
 
@@ -102,7 +103,7 @@ curl -X POST http://127.0.0.1:8000/ingest/web \
 
 ## POST `/detect`
 
-对数据库中全部 `http_access` 事件运行规则 `web_path_scan`，并把告警写入 `alerts` 表。
+对数据库中全部 `http_access` 事件先跑 `web_path_scan`，再跑 `web_sensitive_path`，并把告警写入 `alerts` 表。一个入口，两条规则，用 `rule_id` 区分。
 
 不读日志文件。若从未导入过，结果计数全为 0。
 
@@ -119,7 +120,7 @@ curl -X POST http://127.0.0.1:8000/ingest/web \
 | `skipped` | int | 指纹已存在且证据未变，跳过的条数 |
 | `candidates` | int | 本次规则产出的告警候选数 |
 
-示例（对 `access.log` 第一次检测）：
+示例（对 `access.log` 第一次检测，条数会随敏感路径告警增加）：
 
 ```json
 {
@@ -145,7 +146,14 @@ curl -X POST http://127.0.0.1:8000/detect
 静态资源（`.js` / `.css` / 图片 / 字体 / source map）不参与统计。  
 默认严重级别为 `medium`；不同路径 ≥ 50 或错误占比 ≥ 0.8 时为 `high`。
 
-业务心跳 `POST /transport` 因路径单一、状态多为 200，不应产生告警。
+业务心跳 `POST /transport` 因路径单一、状态多为 200，不应产生路径扫描告警。
+
+### 规则说明（`web_sensitive_path`）
+
+- `/.env`、`/.git/config`、`/etc/passwd` 及同类文件：打 1 次就报，级别 `critical`
+- 解码后仍带 `..`：目录穿越，级别 `high`
+- `/admin`、`/wp-admin`：300 秒内满 3 次才报，级别 `medium`
+- `/transport`、`/data/wechat` 前缀不参与命中
 
 ---
 
@@ -158,7 +166,8 @@ curl -X POST http://127.0.0.1:8000/detect
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `ip` | string | 精确匹配来源 IP |
-| `severity` | string | 精确匹配严重级别，当前可能为 `medium` 或 `high` |
+| `severity` | string | 精确匹配严重级别，可能为 `medium`、`high`、`critical` |
+| `rule` | string | 精确匹配规则 ID，例如 `web_path_scan` 或 `web_sensitive_path` |
 
 不传则返回全部告警。
 
@@ -205,8 +214,8 @@ curl -X POST http://127.0.0.1:8000/detect
 | `fingerprint` | 去重指纹：规则 + IP + 抑制时间桶 |
 | `rule_id` / `rule_name` | 规则英文 ID 与中文名称 |
 | `src_ip` | 来源 IP |
-| `entity` | 实体；路径扫描当前固定为 `-` |
-| `severity` | `medium` 或 `high` |
+| `entity` | 实体；路径扫描为 `-`，敏感路径为命中的签名（如 `/.env`） |
+| `severity` | `medium`、`high` 或 `critical` |
 | `status` | 调查状态，MVP 新建时为 `open` |
 | `summary` | 可读摘要（含阈值和实际计数） |
 | `trigger` | 机器可核对的触发字段 |
@@ -218,6 +227,7 @@ curl -X POST http://127.0.0.1:8000/detect
 curl http://127.0.0.1:8000/alerts
 curl 'http://127.0.0.1:8000/alerts?ip=163.7.11.19'
 curl 'http://127.0.0.1:8000/alerts?severity=high'
+curl 'http://127.0.0.1:8000/alerts?rule=web_sensitive_path'
 ```
 
 ---
@@ -261,14 +271,41 @@ curl http://127.0.0.1:8000/alerts/<alert_id>
 
 ---
 
+## GET `/issues`
+
+列出导入时写入的解析问题（T3、TLS 握手、坏 IP 等）。证明看不懂的行没有悄悄丢掉。最多返回 200 条。
+
+**请求：** 无参数。
+
+**成功（200）：**
+
+```json
+{
+  "count": 1,
+  "issues": [
+    {
+      "source_file": "access.log",
+      "line_no": 12,
+      "code": "non_http",
+      "raw": "…"
+    }
+  ]
+}
+```
+
+```bash
+curl http://127.0.0.1:8000/issues
+```
+
+---
+
 ## 尚未提供的接口
 
-第一周 MVP 没有：
+第二周仍然没有：
 
 - 文件上传（multipart）；只接受项目内路径  
 - SSH 日志导入  
-- 解析问题列表（问题已写入数据库，但无查询接口）  
 - 修改调查状态（triage）  
-- 敏感路径规则、报告导出  
+- 报告导出  
 
 这些计划在后续周次加入。

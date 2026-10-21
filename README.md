@@ -1,12 +1,10 @@
-# AuthShield (week-1 MVP)
+# AuthShield (week-2)
 
-Python + FastAPI + SQLite. Ingest a combined web access log, detect short-window path scans, and inspect alerts over HTTP.
+Python + FastAPI + SQLite. Ingest a combined web access log, detect short-window path scans **and** sensitive-path probes, then inspect alerts over HTTP.
 
-This is the first vertical slice:
+`access.log` → parse → SQLite → `web_path_scan` + `web_sensitive_path` → `/alerts`
 
-`access.log` → parse → SQLite → `web_path_scan` → `/alerts`
-
-No SSH rules, no frontend, no extra detectors yet.
+No SSH rules and no frontend yet. See `week2.md` for the week-2 task list.
 
 ## Setup
 
@@ -31,9 +29,11 @@ curl -X POST http://127.0.0.1:8000/ingest/web \
 
 curl -X POST http://127.0.0.1:8000/detect
 curl http://127.0.0.1:8000/alerts
+curl 'http://127.0.0.1:8000/alerts?rule=web_sensitive_path'
+curl http://127.0.0.1:8000/issues
 ```
 
-`POST /transport` heartbeats from your own Node workers should not become alerts. Scanner IPs with many distinct 4xx paths in 120 seconds should.
+`POST /transport` heartbeats from your own Node workers should not become alerts. Scanner IPs with many distinct 4xx paths in 120 seconds should fire `web_path_scan`. A single `/.env` (or similar) should fire `web_sensitive_path`.
 
 ## Tests
 
@@ -41,7 +41,7 @@ curl http://127.0.0.1:8000/alerts
 pytest
 ```
 
-## Rule
+## Rules
 
 `web_path_scan` fires when one source IP, inside 120 seconds, has:
 
@@ -50,3 +50,10 @@ pytest
 - at least 30% of those requests with status >= 400
 
 Static `.js` / `.css` / images / fonts / source maps are ignored. Severity is `high` when distinct paths reach 50 or the error ratio reaches 0.8.
+
+`web_sensitive_path` fires on a point probe:
+
+- `/.env`、`/.git/config`、`/etc/passwd` and similar: one hit, `critical`
+- decoded path still contains `..`: directory traversal, `high`
+- `/admin` or `/wp-admin`: three hits inside 300 seconds, `medium`
+- `/transport` and `/data/wechat` prefixes are allowlisted

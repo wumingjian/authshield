@@ -68,6 +68,69 @@ FALSE_POSITIVE_NOTE = (
     "只请求静态扩展名的探测会被漏掉。"
 )
 
+# —— 第二周：敏感路径（点射），和上面的路径扫描（面）互补 ——
+
+# 规则英文 ID。指纹和 ?rule= 都会用到。
+SENSITIVE_RULE_ID = "web_sensitive_path"
+# 规则中文名称。
+SENSITIVE_RULE_NAME = "访问异常或敏感路径"
+# /admin 这类累计签名的时间窗口（秒）。
+SENSITIVE_WINDOW_SECONDS = 300
+# 非 critical 签名：窗口里至少打几次才报。
+SENSITIVE_MIN_HITS = 3
+# 敏感路径告警的抑制桶长度（秒）。
+SENSITIVE_SUPPRESSION_SECONDS = 1800
+# critical 路径打 1 次就报。关掉就全部走累计次数。
+CRITICAL_SINGLE_HIT = True
+
+# 这些前缀不参与敏感路径命中。不能把 "/" 放进来，否则所有路径都被放过。
+SENSITIVE_ALLOWLIST = (
+    "/transport",
+    "/data/wechat",
+)
+
+# 打 1 次就报的路径。用规范化后的 path_norm 精确比对。
+CRITICAL_EXACT = frozenset(
+    {
+        "/.env",
+        "/.env.local",
+        "/.env.production",
+        "/.env.bak",
+        "/.git/config",
+        "/.git/head",
+        "/etc/passwd",
+        "/.aws/credentials",
+        "/heapdump",
+        "/actuator/heapdump",
+    }
+)
+
+# 规范化路径以这些结尾也算 critical。例如 /app/.env 对上 /.env。
+CRITICAL_SUFFIXES = (
+    "/.env",
+    "/.env.local",
+    "/.env.production",
+    "/.git/config",
+    "/.git/head",
+    "/etc/passwd",
+    "/.aws/credentials",
+    "/heapdump",
+)
+
+# 300 秒内满 3 次才报。写成 (前缀, 级别)。必须整段相等，或后面紧跟 /。
+REPEAT_PREFIXES = (
+    ("/admin", "medium"),
+    ("/wp-admin", "medium"),
+)
+
+# 敏感路径告警上的误报说明。
+SENSITIVE_FALSE_POSITIVE = (
+    "站点真的把后台放在 /admin 或 /wp-admin 时会误报。"
+    "文档或数据包若使用 .env / .bak 后缀也可能误报。"
+    "自己的扫描器会稳定打中 critical 签名，应该排除来源，而不是关掉规则。"
+    "/transport 和微信 token 路径已加入前缀白名单。"
+)
+
 
 # 算出 SQLite 文件放哪。
 def db_path() -> Path:

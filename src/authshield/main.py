@@ -54,7 +54,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="AuthShield",  # /docs 页面顶上的标题。
         version="0.1.0",  # 版本号，也会显示在 /docs。
-        description="Week-1 MVP: ingest combined web logs and detect path scans.",  # 一句话介绍。
+        description="Week-2: ingest combined web logs, detect path scans and sensitive paths.",
         lifespan=lifespan,  # 把开门/打烊说明书交给 FastAPI。
     )
     # 把 api.py 里的接口清单钉到这个网站上。没有这行就没有 /health、/alerts。

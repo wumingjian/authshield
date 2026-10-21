@@ -55,3 +55,48 @@ def test_ingest_detect_and_dedup(client) -> None:
 def test_ingest_rejects_outside_path(client) -> None:
     response = client.post("/ingest/web", json={"path": "/etc/hosts"})
     assert response.status_code == 400
+
+
+def _write_sensitive_log(path: Path) -> None:
+    lines = [
+        '203.0.113.88 - - [13/Oct/2026:00:08:00 +0800] '
+        '"GET /.env HTTP/1.1" 404 12 "-" "curl/7.68.0"',
+        '203.0.113.88 - - [13/Oct/2026:00:08:01 +0800] '
+        '"GET /admin HTTP/1.1" 404 12 "-" "curl/7.68.0"',
+        '47.99.206.210 - - [13/Oct/2026:00:08:02 +0800] '
+        '"POST /transport HTTP/1.1" 200 7 "-" "node-urllib"',
+        '203.0.113.88 - - [13/Oct/2026:00:08:01 +0800] '
+        '"t3 1" 400 0 "-" "-"',
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_sensitive_rule_filter_issues_and_dedup(client) -> None:
+    log = Path.cwd() / "sensitive.log"
+    _write_sensitive_log(log)
+
+    ingested = client.post("/ingest/web", json={"path": "sensitive.log"})
+    assert ingested.status_code == 200
+    assert ingested.json()["events_inserted"] == 3
+    assert ingested.json()["issues_inserted"] == 1
+
+    first = client.post("/detect")
+    assert first.status_code == 200
+    assert first.json()["created"] == 1
+    assert first.json()["candidates"] == 1
+
+    again = client.post("/detect")
+    assert again.json()["created"] == 0
+    assert again.json()["skipped"] == 1
+
+    listing = client.get("/alerts?rule=web_sensitive_path")
+    assert listing.json()["count"] == 1
+    assert listing.json()["alerts"][0]["entity"] == "/.env"
+
+    scan_only = client.get("/alerts?rule=web_path_scan")
+    assert scan_only.json()["count"] == 0
+
+    issues = client.get("/issues")
+    assert issues.status_code == 200
+    assert issues.json()["count"] == 1
+    assert issues.json()["issues"][0]["code"] == "non_http"

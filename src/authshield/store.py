@@ -68,6 +68,25 @@ def insert_issues(issues: list[ParseIssue]) -> int:
     return inserted
 
 
+# 列出解析问题，证明看不懂的行没有悄悄丢掉。
+def list_issues(limit: int = 200) -> list[dict]:
+    if limit < 1:
+        limit = 1
+    if limit > 1000:
+        limit = 1000
+    with session() as conn:
+        rows = conn.execute(
+            """
+            SELECT source_file, line_no, code, raw
+            FROM parse_issues
+            ORDER BY source_file, line_no
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(item) for item in rows]
+
+
 # 检测前把库存的网页访问事件全部取出，按时间、行号排好。
 def load_events() -> list[Event]:
     with session() as conn:
@@ -185,8 +204,12 @@ def upsert_alerts(alerts: list[Alert]) -> dict[str, int]:
     return {"created": created, "updated": updated, "skipped": skipped}
 
 
-# 列出告警。ip、severity 都可以不传；传了就当过滤条件。
-def list_alerts(src_ip: str | None = None, severity: str | None = None) -> list[dict]:
+# 列出告警。ip、severity、rule_id 都可以不传；传了就当过滤条件。
+def list_alerts(
+    src_ip: str | None = None,
+    severity: str | None = None,
+    rule_id: str | None = None,
+) -> list[dict]:
     # 1=1 是占位条件，后面追加 AND 时不用判断「WHERE 已经有没有」。
     sql = "SELECT * FROM alerts WHERE 1=1"
     params: list[str] = []
@@ -196,6 +219,9 @@ def list_alerts(src_ip: str | None = None, severity: str | None = None) -> list[
     if severity:
         sql += " AND severity = ?"
         params.append(severity)
+    if rule_id:
+        sql += " AND rule_id = ?"
+        params.append(rule_id)
     sql += " ORDER BY window_start DESC"
     with session() as conn:
         rows = conn.execute(sql, params).fetchall()

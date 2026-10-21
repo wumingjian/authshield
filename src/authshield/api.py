@@ -11,16 +11,19 @@ from fastapi import APIRouter, HTTPException
 # BaseModel / Field = 规定请求 JSON 必须长什么样，并在 /docs 里显示说明。
 from pydantic import BaseModel, Field
 
-# 真正做路径扫描判断的函数。
-from authshield.detect_path_scan import detect
+# 真正做路径扫描判断的函数。起别名是因为敏感路径检测也叫 detect。
+from authshield.detect_path_scan import detect as detect_path_scan
+# 第二周：敏感路径 / 目录穿越。
+from authshield.detect_sensitive_path import detect as detect_sensitive_path
 # 读整个 Web 日志文件、拆成事件和问题行的函数。
 from authshield.parse_web import parse_file
-# 下面这一对括号是「从 store.py 一次借多个函数」，10～17 行是同一句。
+# 下面这一对括号是「从 store.py 一次借多个函数」。
 from authshield.store import (
     get_alert,  # 按 ID 取一条告警详情。
     insert_events,  # 把看懂的事件写入数据库。
     insert_issues,  # 把看不懂的行写入问题表。
     list_alerts,  # 按可选条件列出告警。
+    list_issues,  # 列出解析问题。
     load_events,  # 检测前把库存事件取出来。
     upsert_alerts,  # 有告警就更新，没有就新建。
 )
@@ -95,8 +98,8 @@ def ingest_web(body: IngestBody) -> dict[str, int | str]:
 def run_detect() -> dict[str, int]:
     # 从库里取出已导入的访问记录。没导入过就是空的。
     events = load_events()
-    # 交给路径扫描规则，找出短时间乱扫很多路径的 IP。
-    alerts = detect(events)
+    # 先跑路径扫描（面），再跑敏感路径（点）。一个按钮，两条规则。
+    alerts = detect_path_scan(events) + detect_sensitive_path(events)
     # 写入告警表：没有就新建，有了且证据没变就跳过。
     result = upsert_alerts(alerts)
     # 往结果字典里再加一项：这次一共找出多少条候选告警。
@@ -105,12 +108,23 @@ def run_detect() -> dict[str, int]:
     return result
 
 
+# 盖章：GET /issues 列出导入时看不懂的行。
+@router.get("/issues")
+def issues() -> dict:
+    rows = list_issues()
+    return {"count": len(rows), "issues": rows}
+
+
 # 盖章：GET /alerts 列出告警。只看、不强制改库。浏览器直接打开也能看到 JSON。
 @router.get("/alerts")
-# ip、severity 都可以不传（默认 None）。FastAPI 会把它们变成 ?ip= 这种查询参数。
-def alerts(ip: str | None = None, severity: str | None = None) -> dict:
-    # 按名字把接口上的 ip 传给存储层的 src_ip（两边名字不一样，要对准）。
-    rows = list_alerts(src_ip=ip, severity=severity)
+# ip、severity、rule 都可以不传（默认 None）。FastAPI 会把它们变成 ?ip= 这种查询参数。
+def alerts(
+    ip: str | None = None,
+    severity: str | None = None,
+    rule: str | None = None,
+) -> dict:
+    # 按名字把接口上的 ip / rule 传给存储层（两边名字不一样，要对准）。
+    rows = list_alerts(src_ip=ip, severity=severity, rule_id=rule)
     # count 一眼知道几条；alerts 是列表，里面每条告警是一本小字典。
     return {"count": len(rows), "alerts": rows}
 
